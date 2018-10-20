@@ -1,3 +1,7 @@
+#################################################################
+# nhl_stat.py
+# by krowe
+#################################################################
 import requests
 import json
 import sys
@@ -6,19 +10,41 @@ import argparse
 import math
 import os
 
-# https://gitlab.com/dword4/nhlapi
-# https://gitlab.com/dword4/nhlapi/blob/master/stats-api.md
-# https://statsapi.web.nhl.com/api/v1/teams
-# https://statsapi.web.nhl.com/api/v1/teams/1?expand=team.roster
-# https://statsapi.web.nhl.com/api/v1/people/8480002
-# https://statsapi.web.nhl.com/api/v1/schedule
-#
-# useful: http://jsonviewer.stack.hu/
+#################################################################
+# API Documentation:
+#     https://gitlab.com/dword4/nhlapi
+#     https://gitlab.com/dword4/nhlapi/blob/master/stats-api.md
+#################################################################
+# API Examples:
+#     https://statsapi.web.nhl.com/api/v1/teams
+#     https://statsapi.web.nhl.com/api/v1/teams/1?expand=team.roster
+#     https://statsapi.web.nhl.com/api/v1/people/8480002
+#     https://statsapi.web.nhl.com/api/v1/schedule
+#################################################################
+# Tools: 
+#     http://jsonviewer.stack.hu/
+#################################################################
+# Test:
+#     python3 nhl_stat.py --update-data
+#     python3 nhl_stat.py --show-nationalities
+#     python3 nhl_stat.py --nationality=CHE --show-players
+#     python3 nhl_stat.py --nationality=CHE --show-games
+#     python3 nhl_stat.py --nationality=CHE --show-games --date=2018-10-18
+#################################################################
+# TODO:
+#     - goalie stats
+#     - summary of all nations stats on a given day
+#       - average of stats for given nation
+#     - full season stats for given nation
+#     - 
+#     - 
+#################################################################
 
-URL_ROOT   = 'https://statsapi.web.nhl.com'
-LINK_TEAMS = '/api/v1/teams'
-LINK_SCHED = '/api/v1/schedule'
-LINK_GAME  = '/api/v1/game/{}/feed/live'
+URL_ROOT      = 'https://statsapi.web.nhl.com'
+LINK_TEAMS    = '/api/v1/teams'
+LINK_SCHED    = '/api/v1/schedule'
+LINK_GAME     = '/api/v1/game/{}/feed/live'
+JSON_FILENAME = 'nhl_players.json'
 
 def log(s):
   #print("{}: {}".format(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), s))
@@ -29,22 +55,18 @@ def fatal(s):
   sys.exit(1)
   
 def get_json_filename(args):
-  return "{}_players.json".format(args.nationality)
+  #return "{}_players.json".format(args.nationality)
+  return JSON_FILENAME
   
-def write_json_file(data, data_name, filename):
-  #log("Writing {} to {}".format(data_name, filename))
+def write_json_file(data, filename):
   data_json_str = json.dumps(data)
   with open(filename, "w") as fp:
     fp.write(data_json_str)
-  #log("Writing {} to {} - Done".format(data_name, filename))
   
-def read_json_file(data_name, filename):
-  #log("Reading {} from {}".format(data_name, filename))
+def read_json_file(filename):
   with open(filename, "r") as fp:
     data_json_str = fp.read()
-  data = json.loads(data_json_str)
-  #log("Reading {} from {} - Done".format(data_name, filename))
-  return data
+  return json.loads(data_json_str)
 
 def get_url_json(url):
   result = requests.get(url)
@@ -68,6 +90,22 @@ def get_player(roster_player):
   else:
     return None
     
+def get_player_nationality(player):
+  if 'nationality' in player:
+    return player['nationality']
+  elif 'birthCountry' in player:
+    return player['birthCountry']
+  else:
+    log("Player doesn't have nationality or birthCountry:\n{}".format(player))
+    return None
+    
+def get_team(opts, team_id):
+  for team in opts['data']['teams']:
+    if team['id'] == team_id:
+      return team
+  log("No team with id of {}".format(team_id))
+  return None
+    
 def get_game(day_game):
   return get_url_json(URL_ROOT + day_game['link'])
   
@@ -81,82 +119,83 @@ def get_games(game_date):
       games_all.append(game_full)
   return games_all
 
-def update_nat_players(args, opts):
-  data = {'nationality':args.nationality, 'players':[], 'teams':[]}
+def update_data(args, opts):
+  data = {'nationalities':[], 'players':[], 'teams':[]}
   
   log("Updating {} players".format(args.nationality))
-  #log("Reading all players")
   teams = get_teams()
   for team in teams:
     log("Reading players on {}".format(team['name']))
-    team_min = {'id':team['id'], 'name':team['name'], 'link':team['link'], 'abbreviation':team['abbreviation'] }
+    data['teams'].append({'id':team['id'], 'name':team['name'], 'link':team['link'], 'abbreviation':team['abbreviation'] })
     has_nat_player = False
     roster = get_roster(team)
     for roster_player in roster:
       player = get_player(roster_player)
       if player:
-        if ('nationality' in player and player['nationality'] == args.nationality) or ('birthCountry' in player and player['birthCountry'] == args.nationality):
-          has_nat_player = True
-          data['players'].append({'id':player['id'], 'fullName':player['fullName'], 'link':player['link'], 'team':team_min, })
-    if has_nat_player:
-      data['teams'].append(team_min)
-  #log("Reading all players - Done")
+        nationality = get_player_nationality(player)
+        if nationality:
+          player_team = {'id':team['id'], 'name':team['name'] }
+          data['players'].append({'id':player['id'], 'fullName':player['fullName'], 'link':player['link'], 'team':player_team, 'nationality':nationality})
+          # kffr - what if a play gets traded mid season?
+          
+          if not nationality in data['nationalities']:
+            data['nationalities'].append(nationality)
   
-  write_json_file(data, "{} Player Data".format(args.nationality), opts['filename'])
+  data['nationalities'] = sorted(data['nationalities'])
   
-def show_nat_players(args, opts, nat_player_data):
-  if not nat_player_data: # or not 'players' in data or data['players'] == None or len(data['players']) == 0:
-    nat_player_data = read_json_file("{} Player Data".format(args.nationality), opts['filename'])
+  write_json_file(data, opts['filename'])
+
+def show_nat_players(args, opts):
+  nat_players = []
+  nat_player_teams = []
+  for player in opts['data']['players']:
+    if player['nationality'] == args.nationality:
+      nat_players.append(player)
+      nat_player_teams.append(player['team']['name'])
+  
+  nat_player_teams = list(set(nat_player_teams))
     
-  log("There are {} NHL teams with {} players:".format(len(nat_player_data['teams']), args.nationality))
-  for team in nat_player_data['teams']:
-    log("  {}".format(team['name']))
-  log("There are {} {} players in the NHL:".format(len(nat_player_data['players']), args.nationality))
-  for player in nat_player_data['players']:
+  log("There are {} NHL teams with {} players:".format(len(nat_player_teams), args.nationality))
+  for team in nat_player_teams:
+    log("  {}".format(team))
+  log("There are {} {} players in the NHL:".format(len(nat_players), args.nationality))
+  for player in nat_players:
     log("  {} - {:20s} - {}".format(player['id'], player['fullName'], player['team']['name']))
-  
-def show_nat_games(args, opts, nat_player_data, game_date):
-  if not nat_player_data:
-    nat_player_data = read_json_file("{} Player Data".format(args.nationality), opts['filename'])
-    
+
+def show_nat_games(args, opts, game_date):
   games = get_games(game_date)
-  
-  nat_team_ids         = [x['id'] for x in nat_player_data['teams']]
-  nat_player_ids       = [x['id'] for x in nat_player_data['players']]
+
+  nat_players          = [x for x in opts['data']['players'] if x['nationality'] == args.nationality]
+  nat_player_ids       = [x['id'] for x in nat_players]
+  nat_team_ids         = [x['team']['id'] for x in nat_players]
   nat_player_ids_today = []
   
   totals = {'count':0, 'goals':0, 'assists':0, 'points':0, 'toi':0, 'hits':0, 'blocks':0, 'plusminus':0, 'pim':0, 'fo_win':0, 'fo_total':0, }
   
   log("There are {} games on {}:".format(len(games), game_date.isoformat()))
   for game in games:
-    #game_time = game['gameData']['datetime']['dateTime']
-    #game_time = datetime.datetime.strptime(game_time, '%Y-%m-%dT%H:%M:%SZ')
-    #game_time = game_time - datetime.timedelta(hours=7)
     away_team = game['gameData']['teams']['away']
     home_team = game['gameData']['teams']['home']
     game_status = game['gameData']['status']['abstractGameState'].strip()
-    #log("  {} - {} at {}".format(game_time, away_team['name'], home_team['name']))
-    #log("  {} @ {} - {}".format(away_team['name'], home_team['name'], game_status))
     log("  {} @ {} - {}".format(away_team['abbreviation'], home_team['abbreviation'], game_status))
       
     nat_away_players = []
     nat_home_players = []
     nat_all_players = []
     if away_team['id'] in nat_team_ids:
-      for player in nat_player_data['players']:
+      for player in nat_players:
         if player['team']['id'] == away_team['id']:
           nat_away_players.append(player)
           nat_all_players.append(player)
           nat_player_ids_today.append(player['id'])
     if home_team['id'] in nat_team_ids:
-      for player in nat_player_data['players']:
+      for player in nat_players:
         if player['team']['id'] == home_team['id']:
           nat_home_players.append(player)
           nat_all_players.append(player)
           nat_player_ids_today.append(player['id'])
     
     if len(nat_all_players) == 0:
-      #log("      No {} players".format(args.nationality))
       continue
       
     ## Plays
@@ -170,12 +209,11 @@ def show_nat_games(args, opts, nat_player_data, game_date):
     #        log("!!! Goal   - {}".format(player['player']['fullName']))
     #      if player['playerType'] == "Assist":
     #        log("!!! Assist - {}".format(player['player']['fullName']))
-    
+      
     # Box
     for player in nat_away_players:
       if game_status in ["Preview"]:
         log("      {} - {:20s} - game has not started".format(away_team['abbreviation'], player['fullName']))
-        #log("      {} - {:20s}".format(away_team['abbreviation'], player['fullName']))
       else:
         id_str = "ID{}".format(player['id'])
         game_players = game['liveData']['boxscore']['teams']['away']['players']
@@ -187,7 +225,6 @@ def show_nat_games(args, opts, nat_player_data, game_date):
     for player in nat_home_players:
       if game_status in ["Preview"]:
         log("      {} - {:20s} - game has not started".format(home_team['abbreviation'], player['fullName']))
-        #log("      {} - {:20s}".format(home_team['abbreviation'], player['fullName']))
       else:
         id_str = "ID{}".format(player['id'])
         game_players = game['liveData']['boxscore']['teams']['home']['players']
@@ -205,10 +242,10 @@ def show_nat_games(args, opts, nat_player_data, game_date):
   else:
     log("{} players without a game on {} ({}): ".format(args.nationality, game_date.isoformat(), len(nat_player_ids_dnp_today)))
     for id in nat_player_ids_dnp_today:
-      for player in nat_player_data['players']:
+      for player in nat_players:
         if player['id'] == id:
           log("  {}".format(player['fullName']))
-      
+  
 def print_player_stats(totals, player, player_stats, team_abbreviation):
   if 'skaterStats' in player_stats['stats']:
     name      = player['fullName']
@@ -271,31 +308,14 @@ def get_plusminus_str(plusminus):
   else:
     return "{}".format(plusminus)
     
-def show_all_nats(args, opts):
-  nats = []
-  teams = get_teams()
-  for team in teams:
-    roster = get_roster(team)
-    for roster_player in roster:
-      player = get_player(roster_player)
-      if player:
-        if 'nationality' in player:
-          nats.append(player['nationality'])
-        elif 'birthCountry' in player:
-          nats.append(player['birthCountry'])
-        else:
-          log("    Unknown nationality - {}".format(player))
-          
-  nats = sorted(list(set(nats)))
-  
-  log("Nationalities represented on NHL rosters ({}):".format(len(nats)))
-  for nat in nats:
+def show_nationalities(args, opts):
+  for nat in opts['data']['nationalities']:
     log("    {}".format(nat))
-  
+
 def get_args():
   usage = "usage: %prog [opt]"
   parser = argparse.ArgumentParser(description='Process some integers.')
-  parser.add_argument("--update-players",     dest="update_players",     default=False, action="store_true", help="")
+  parser.add_argument("--update-data",        dest="update_data",        default=False, action="store_true", help="")
   parser.add_argument("--show-players",       dest="show_players",       default=False, action="store_true", help="")
   parser.add_argument("--show-games",         dest="show_games",         default=False, action="store_true", help="")
   parser.add_argument("--date",               dest="game_date",          default=None,  action="store",      help="")
@@ -306,32 +326,36 @@ def get_args():
 def main():
   args = get_args()
   opts = {}
-  
-  if args.show_nationalities:
-    show_all_nats(args, opts)
-    sys.exit(0)
-  
-  if args.nationality == None:
-    log("Must specify a nationality")
-    sys.exit(1)
-  else:
-    log("Using nationality of {}".format(args.nationality))
     
   opts['filename'] = get_json_filename(args)
   
-  if args.update_players or not os.path.exists(opts['filename']):
-    nat_player_data = update_nat_players(args, opts)
+  if args.update_data or not os.path.exists(opts['filename']):
+    opts['data'] = update_data(args, opts)
   else:
-    nat_player_data = read_json_file("{} Player Data".format(args.nationality), opts['filename'])
+    opts['data'] = read_json_file(opts['filename'])
   
-  if args.show_players:
-    show_nat_players(args, opts, nat_player_data)
+  if args.show_nationalities:
+    show_nationalities(args, opts)
+    sys.exit(0)
     
-  if args.show_games:
-    if args.game_date:
-      show_nat_games(args, opts, nat_player_data, datetime.datetime.strptime(args.game_date, '%Y-%m-%d').date())
+  if args.show_players or args.show_games:
+    if args.nationality == None:
+      fatal("Must specify a nationality")
+    elif not args.nationality in opts['data']['nationalities']:
+      fatal("{} is not a nationality with NHL players".format(args.nationality))
     else:
-      show_nat_games(args, opts, nat_player_data, datetime.date.today())
+      log("Nationality is {}".format(args.nationality))
+    
+    if args.show_players:
+      show_nat_players(args, opts)
+    
+    if args.show_games:
+      if args.game_date:
+        show_nat_games(args, opts, datetime.datetime.strptime(args.game_date, '%Y-%m-%d').date())
+      else:
+        show_nat_games(args, opts, datetime.date.today())
 
 if __name__ == '__main__':
   main()
+
+
