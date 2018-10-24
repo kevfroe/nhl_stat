@@ -36,8 +36,8 @@ import os
 #     - summary of all nations stats on a given day
 #       - average of stats for given nation
 #     - full season stats for given nation
-#     - 
-#     - 
+#     - show score of game
+#     - show position of player
 #################################################################
 
 URL_ROOT      = 'https://statsapi.web.nhl.com'
